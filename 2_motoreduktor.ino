@@ -70,7 +70,7 @@ void przerwanie() {
 float predkoscMierzona() {
   float suma = 0;
   for (int i = 0; i < 4; i++) suma += pomiary[i];
-  const float wspolczynnik = 1371,42857143;
+  const float wspolczynnik = 4114.28571429;
 
   return ((suma == 0) || (suma > 2000)) ? 0 : wspolczynnik / suma;
 }
@@ -79,7 +79,7 @@ float predkoscMierzona() {
 void pomiarPredkosciISerialPlotter() {
   czas = millis();
   if (czas - pomiar > 300) {
-    pomiary[numer] = 999;   // sztucznie duza wartosc, by predkosc spadla do 0
+    pomiary[numer] = 999;
     numer++;
     if (numer > 3) numer = 0;
     pomiar = czas;
@@ -144,15 +144,6 @@ void setup() {
 
   // attachInterrupt(digitalPinToInterrupt(pinEnkoder), przerwanie, CHANGE);
   // czasStartPomiaru = millis();
-
-
-  // attachInterrupt(digitalPinToInterrupt(pinEnkoder), przerwanie, CHANGE);
-  // unsigned long startCzasu = millis();
-  // pomiar = startCzasu;
-  // czas   = startCzasu;
-  // numer  = 0;
-  // for (int i = 0; i < 4; i++) pomiary[i] = 0;
-  // czasOstatniegoWyslania = startCzasu;
 
   Serial.println("Start. Podaj wartosc PWM 0–255 (NO LINE ENDING).");
 }
