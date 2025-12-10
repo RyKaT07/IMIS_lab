@@ -47,4 +47,42 @@ Opisane w sekcji 3 PDF („Laboratorium 3 – zadania do wykonania”). Każdy p
 - Serial Plotter: `Tools > Serial Plotter`, `9600 baud`, format `0 <predkosc> <pwm>`; w zakresie ćwiczenia 3 odczytuj obie wartości równocześnie.
 - Serial Monitor: `9600 baud`, włącz `No line ending` lub `Both NL & CR` zgodnie z PDF (zazwyczaj `NL`).
 
+---
+
+## Ćwiczenie 4 – Mini-robot o napędzie różnicowym
+Opisane w sekcji 4 PDF („Laboratorium 4 – zadania do wykonania”). [cite_start]Ćwiczenie łączy dwa silniki w jeden system sterowania z kinematyką ruchu po łuku[cite: 788].
+
+
+
+1. **Konfiguracja i pomiar parametrów robota (podpunkt 4.1 i 4.2 PDF)**
+   - W pliku `4_robot.ino` znajdź sekcję `PARAMETRY ROBOTA`. **Kluczowe:** Zmierz linijką i wpisz poprawne wartości dla `rozstawKol_D` (odległość między środkami opon) oraz `srednicaKola`.
+   - Upewnij się, że piny w kodzie odpowiadają schematowi (Lewy: PWM=5/Enc=2, Prawy: PWM=6/Enc=3).
+
+2. **Uruchomienie regulatorów PID dla obu kół (podpunkt 4.3.1 PDF)**
+   - Wgraj kod. Robot domyślnie stoi (`v=0`).
+   - Otwórz Serial Monitor. Wyślij komendę `v0.2` (ustaw prędkość 0.2 m/s) oraz `r1000` (promień "nieskończoność" -> jazda prosto).
+   - Dostrój PID (komendy `p`, `i`, `d`) obserwując reakcję obu kół[cite: 823]. Parametry są wspólne dla obu silników.
+
+3. **Jazda po prostej i korekcja (podpunkt 4.3.2 i 4.3.3 PDF)**
+   - Wyślij `r1000` (lub inną dużą wartość). Obserwuj w Serial Plotterze, czy `predkoscAktualna_L` i `predkoscAktualna_P` pokrywają się z zadanymi wartościami.
+   - Dzięki regulatorowi PID z członem całkującym (`I`), robot powinien sam korygować błędy wynikające z różnic w silnikach (znoszenie powinno być minimalne w porównaniu do sterowania w pętli otwartej).
+
+4.  **Jazda po łuku – kinematyka (podpunkt 4.3.4 i 4.3.5 PDF)**
+    - Wpisz w terminalu np. `v0.2` oraz `r0.5` (skręt o promieniu 0.5 metra).
+    - Funkcja `ustawJazdePoLuku()` automatycznie przeliczy, że jedno koło musi kręcić się szybciej, a drugie wolniej, zgodnie ze wzorami kinematycznymi.
+
+### Obsługa Terminala (Ćwiczenie 4)
+W tym zadaniu komunikacja została rozbudowana o kinematykę:
+- `vX.X` – zadaj prędkość liniową w m/s (np. `v0.3`).
+- `rX.X` – zadaj promień skrętu w metrach (np. `r0.5`). Duża wartość (np. 1000) oznacza jazdę prosto.
+- `sX` – (serwisowe) wymuś konkretne obroty/min na obu silnikach pomijając kinematykę.
+- `pX`, `iX`, `dX` – zmiana nastaw PID „na żywo” dla obu silników jednocześnie.
+
+### Serial Plotter (Ćwiczenie 4)
+Dane wyświetlane są w kolumnach dla obu silników jednocześnie, co pozwala ocenić synchronizację:
+- Format: `0 <Zadana_L> <Aktualna_L> <Zadana_P> <Aktualna_P> <PWM_L> <PWM_P>`.
+
+
+Gemini może popełniać błędy, także co do ludzi, dlatego dokładnie sprawdzaj odpowiedzi. Twoja
+
 Jeśli coś nie działało i udało Ci się to naprawić, zrób pull request z poprawkami.
