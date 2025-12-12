@@ -3,7 +3,16 @@ const int pinSilnikL = 5;   // PWM Lewy
 const int pinSilnikP = 6;   // PWM Prawy
 const int pinEnkoderL = 2;  // INT0 Lewy
 const int pinEnkoderP = 3;  // INT1 Prawy
+const int ogrnaicz_PWM = 120;
 
+volatile unsigned long licznikTotal_L = 0;
+volatile unsigned long licznikTotal_P = 0;
+
+// PARAMETR DO KALIBRACJI:
+// Ile impulsów enkodera przypada na 1 pełny obrót KOŁA wyjściowego?
+// Szacunek na podstawie Twojego 'wspolczynnika': ~58.33 impulsu na obrót koła.
+// Jeśli robot przejedzie 1m, a pokaże 0.8m -> zwiększ tę liczbę.
+const float IMPULSY_NA_OBROT_KOLA = 58.33; 
 // ====================== ZMIENNE POMIAROWE (LEWY) ======================
 volatile unsigned long pomiar_L = 0;
 volatile int numer_L = 0;
@@ -21,15 +30,16 @@ const float wspolczynnik = 4114.28571429;
 
 // ====================== PARAMETRY ROBOTA (DO ZMIERZENIA!) ======================
 // Uzupełnij te wartości:
-const float rozstawKol_D = 0.14;      // [m]
-const float srednicaKola = 0.065;     // [m]
+const float rozstawKol_D = 0.09;      // [m]
+const float srednicaKola = 0.040;     // [m]
 
 // ====================== REGULATOR PID (LEWY) ======================
 float predkoscZadana_L = 0.0; 
 float predkoscAktualna_L = 0.0;
-float Kp_L = 2.0; 
-float Ki_L = 5.0;   // Mniejsze Ki, bo nie możemy hamować aktywnie
-float Kd_L = 0.0;
+float predkoscAktualna_SR = 0.0;
+float Kp_L = 0.3; 
+float Ki_L = 2;   // Mniejsze Ki, bo nie możemy hamować aktywnie
+float Kd_L = 0.05;
 float integral_L = 0.0;
 float lastError_L = 0.0;
 int pwmWyjscie_L = 0;
@@ -37,9 +47,9 @@ int pwmWyjscie_L = 0;
 // ====================== REGULATOR PID (PRAWY) ======================
 float predkoscZadana_P = 0.0;
 float predkoscAktualna_P = 0.0;
-float Kp_P = 2.0; 
-float Ki_P = 5.0; 
-float Kd_P = 0.0;
+float Kp_P = 0.3; 
+float Ki_P = 3; 
+float Kd_P = 0.01;
 float integral_P = 0.0;
 float lastError_P = 0.0;
 int pwmWyjscie_P = 0;
@@ -61,6 +71,8 @@ void przerwanieL() {
   numer_L++;
   if (numer_L > 3) numer_L = 0;
   czasBrakuImpulsu_L = t;
+  
+  licznikTotal_L++; // <--- DODANO
 }
 
 void przerwanieP() {
@@ -70,7 +82,59 @@ void przerwanieP() {
   numer_P++;
   if (numer_P > 3) numer_P = 0;
   czasBrakuImpulsu_P = t;
+  
+  licznikTotal_P++; // <--- DODANO
 }
+
+void jedzDystans(float metry, float predkosc_ms) {
+  // 1. Oblicz ile to impulsów
+  float obwod = PI * srednicaKola; // w metrach
+  float wymaganeObroty = metry / obwod;
+  unsigned long wymaganeImpulsy = (unsigned long)(wymaganeObroty * IMPULSY_NA_OBROT_KOLA);
+
+  // 2. Zapamiętaj stan początkowy liczników
+  unsigned long startL = licznikTotal_L;
+  unsigned long startP = licznikTotal_P;
+
+
+  Serial.print("Jade dystans: "); Serial.print(metry); 
+  Serial.print("m. Cel impulsow: "); Serial.println(wymaganeImpulsy);
+
+  // 4. Pętla oczekiwania - jedź dopóki średnia z obu kół nie osiągnie celu
+  while (true) {
+    // Oblicz ile przejechały
+    unsigned long przebyteL = licznikTotal_L - startL;
+    unsigned long przebyteP = licznikTotal_P - startP;
+    unsigned long srednia = (przebyteL + przebyteP) / 2;
+
+    // Sprawdź czy dojechaliśmy
+    if (srednia >= wymaganeImpulsy) {
+      break; // Wyjście z pętli
+    }
+
+    // WAŻNE: W pętli musimy aktualizować PID i obsługiwać bezpieczeństwo!
+    obslugaBrakuImpulsu();
+    aktualizujPID();
+    
+    // Opcjonalnie: wizualizacja postępu co 100ms
+    static unsigned long lastPrint = 0;
+    if (millis() - lastPrint > 100) {
+      Serial.print("Postep: "); Serial.print(srednia);
+      Serial.print("/"); Serial.println(wymaganeImpulsy);
+      lastPrint = millis();
+    }
+  }
+
+  // 5. Stop po dojechaniu
+  predkoscZadana_L = 0;
+  predkoscZadana_P = 0;
+  pwmWyjscie_L = 0;
+  pwmWyjscie_P = 0;
+  analogWrite(pinSilnikL, 0);
+  analogWrite(pinSilnikP, 0);
+  Serial.println("Dystans osiagniety. STOP.");
+}
+
 
 // ====================== OBLICZANIE PRĘDKOŚCI ======================
 
@@ -141,7 +205,7 @@ int liczPID(float zadana, float aktualna, float &calka, float &lastErr, float kp
   // Całka nie może być ujemna, bo nie możemy "oddać" sterowania ujemnym napięciem
   float integralCandidate = calka + ki * error * dt;
   if (integralCandidate < 0) integralCandidate = 0; 
-  if (integralCandidate > 255) integralCandidate = 255;
+  if (integralCandidate > ogrnaicz_PWM) integralCandidate = ogrnaicz_PWM;
   calka = integralCandidate;
   
   float iTerm = calka;
@@ -156,7 +220,7 @@ int liczPID(float zadana, float aktualna, float &calka, float &lastErr, float kp
   float w = pTerm + iTerm + dTerm;
   
   // OGRANICZENIE TYLKO DODATNIE (0 - 255)
-  if (w > 255) w = 255;
+  if (w > ogrnaicz_PWM) w = ogrnaicz_PWM;
   if (w < 0)   w = 0; 
   
   return int(w);
@@ -212,6 +276,12 @@ void obslugaKomunikacji() {
       setR = Serial.parseFloat();
       ustawJazdePoLuku(setV, setR);
       break;
+    case 'x': // Komenda: x0.5 -> jedź 0.5 metra z domyślną prędkością
+      {
+        float dystans = Serial.parseFloat();
+        // Domyślna prędkość np. 0.2 m/s, można zmienić
+        jedzDystans(dystans, 0.2); 
+      }
     case 'p':
       { float val = Serial.parseFloat(); Kp_L = val; Kp_P = val; }
       break;
@@ -221,6 +291,7 @@ void obslugaKomunikacji() {
     case 'd':
       { float val = Serial.parseFloat(); Kd_L = val; Kd_P = val; }
       break;
+      
     case '?':
       Serial.print("V_zad: "); Serial.print(setV);
       Serial.print(" R_zad: "); Serial.println(setR);
@@ -248,6 +319,8 @@ void setup() {
   czasBrakuImpulsu_L = start; czasBrakuImpulsu_P = start;
   
   Serial.println("Start. Brak wstecznego. Komendy: v[m/s], r[m], s[rpm]");
+  //ustawJazdePoLuku(0.2, 0.2);
+  //jedzDystans(1.2, 0.2);
 }
 
 void loop() {
@@ -260,114 +333,19 @@ void loop() {
     // Format dla Serial Plottera:
     // Oś_Zero ZadanaL AktL ZadanaP AktP PWM_L PWM_P
     Serial.print("0 "); 
-    Serial.print(predkoscZadana_L); Serial.print(" ");
-    Serial.print(predkoscAktualna_L); Serial.print(" ");
-    Serial.print(predkoscZadana_P); Serial.print(" ");
-    Serial.print(predkoscAktualna_P); Serial.print(" ");
-    Serial.print(pwmWyjscie_L); Serial.print(" ");
+    Serial.print("Predkosc_zadana_L:");
+    Serial.print(predkoscZadana_L); Serial.print(",");
+    Serial.print("Predkosc_aktualna_L:");
+    Serial.print(predkoscAktualna_L); Serial.print(",");
+    Serial.print("Predkosc_zadana_P:");
+    Serial.print(predkoscZadana_P); Serial.print(",");
+    Serial.print("Predkosc_aktualna_P:");
+    Serial.print(predkoscAktualna_P); Serial.print(",");
+    Serial.print("PWM_wyjscie_L:");
+    Serial.print(pwmWyjscie_L); Serial.print(",");
+    Serial.print("PWM_wyjscie_P:");
     Serial.println(pwmWyjscie_P);
     
     czasOstatniegoWyslania = teraz;
   }
 }
-
-
-
-// ... (istniejące zmienne)
-
-// DODAJ TO: Liczniki całkowite drogi
-volatile unsigned long licznikTotal_L = 0;
-volatile unsigned long licznikTotal_P = 0;
-
-// PARAMETR DO KALIBRACJI:
-// Ile impulsów enkodera przypada na 1 pełny obrót KOŁA wyjściowego?
-// Szacunek na podstawie Twojego 'wspolczynnika': ~58.33 impulsu na obrót koła.
-// Jeśli robot przejedzie 1m, a pokaże 0.8m -> zwiększ tę liczbę.
-const float IMPULSY_NA_OBROT_KOLA = 58.33; 
-
-// ...
-
-// ZMODYFIKOWANE PRZERWANIA
-void przerwanieL() {
-  unsigned long t = millis();
-  pomiary_L[numer_L] = int(t - pomiar_L);
-  pomiar_L = t;
-  numer_L++;
-  if (numer_L > 3) numer_L = 0;
-  czasBrakuImpulsu_L = t;
-  
-  licznikTotal_L++; // <--- DODANO
-}
-
-void przerwanieP() {
-  unsigned long t = millis();
-  pomiary_P[numer_P] = int(t - pomiar_P);
-  pomiar_P = t;
-  numer_P++;
-  if (numer_P > 3) numer_P = 0;
-  czasBrakuImpulsu_P = t;
-  
-  licznikTotal_P++; // <--- DODANO
-}
-
-// Funkcja realizująca jazdę na zadaną odległość [m]
-void jedzDystans(float metry, float predkosc_ms) {
-  // 1. Oblicz ile to impulsów
-  float obwod = PI * srednicaKola; // w metrach
-  float wymaganeObroty = metry / obwod;
-  unsigned long wymaganeImpulsy = (unsigned long)(wymaganeObroty * IMPULSY_NA_OBROT_KOLA);
-
-  // 2. Zapamiętaj stan początkowy liczników
-  unsigned long startL = licznikTotal_L;
-  unsigned long startP = licznikTotal_P;
-
-  // 3. Ruszamy (zakładamy jazdę prosto, czyli R = bardzo dużo)
-  ustawJazdePoLuku(predkosc_ms, 1000.0);
-
-  Serial.print("Jade dystans: "); Serial.print(metry); 
-  Serial.print("m. Cel impulsow: "); Serial.println(wymaganeImpulsy);
-
-  // 4. Pętla oczekiwania - jedź dopóki średnia z obu kół nie osiągnie celu
-  while (true) {
-    // Oblicz ile przejechały
-    unsigned long przebyteL = licznikTotal_L - startL;
-    unsigned long przebyteP = licznikTotal_P - startP;
-    unsigned long srednia = (przebyteL + przebyteP) / 2;
-
-    // Sprawdź czy dojechaliśmy
-    if (srednia >= wymaganeImpulsy) {
-      break; // Wyjście z pętli
-    }
-
-    // WAŻNE: W pętli musimy aktualizować PID i obsługiwać bezpieczeństwo!
-    obslugaBrakuImpulsu();
-    aktualizujPID();
-    
-    // Opcjonalnie: wizualizacja postępu co 100ms
-    static unsigned long lastPrint = 0;
-    if (millis() - lastPrint > 100) {
-      Serial.print("Postep: "); Serial.print(srednia);
-      Serial.print("/"); Serial.println(wymaganeImpulsy);
-      lastPrint = millis();
-    }
-  }
-
-  // 5. Stop po dojechaniu
-  predkoscZadana_L = 0;
-  predkoscZadana_P = 0;
-  pwmWyjscie_L = 0;
-  pwmWyjscie_P = 0;
-  analogWrite(pinSilnikL, 0);
-  analogWrite(pinSilnikP, 0);
-  Serial.println("Dystans osiagniety. STOP.");
-}
-
-// wewnątrz switch(cCo) w funkcji obslugaKomunikacji:
-
-    case 'x': // Komenda: x0.5 -> jedź 0.5 metra z domyślną prędkością
-      {
-        float dystans = Serial.parseFloat();
-        // Domyślna prędkość np. 0.2 m/s, można zmienić
-        jedzDystans(dystans, 0.2); 
-      }
-      break;
