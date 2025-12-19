@@ -13,14 +13,14 @@
 //#define LAB5_PUNKT_2_RS_P_LUB_PI
 //#define LAB5_PUNKT_3_RS_LUK
 //#define LAB5_PUNKT_4_OKRAG_POL_SZYBK
-//#define LAB5_PUNKT_5_OSEMKA_ROZNE_R
+#define LAB5_PUNKT_5_OSEMKA_ROZNE_R
 //
 // KROK C (opcjonalnie): jeśli punkt 2 -> wybierz RS: P albo PI:
 //#define RS_TYLKO_P
 //#define RS_PI
 
 // ====================== TRYB STARTU (RESET-START vs SERIAL) ======================
-#define START_FROM_SETUP 0
+#define START_FROM_SETUP 1
 const unsigned long START_DELAY_MS = 600;   // po resecie poczekaj chwilę zanim ruszy (bezpieczniej)
 
 // Parametry startowe – to jest odpowiednik tego, co wpisywałeś po Serial:
@@ -29,18 +29,18 @@ float setup_v_ms = 0.20;
 float setup_r_m  = 1000.0;
 
 // Parametry do punktu 4 (okrąg: pół wolniej)
-float setup_p4_radius_m = 0.80;
-float setup_p4_v_fast_ms = 0.20;  // 1/2 okręgu
-float setup_p4_v_slow_ms = 0.10;  // 2/2 okręgu
+float setup_p4_radius_m = 0.20;
+float setup_p4_v_fast_ms = 0.15;  // 1/2 okręgu
+float setup_p4_v_slow_ms = 0.30;  // 2/2 okręgu
 
 // Parametry do punktu 5 (ósemka: 2 pętle o różnych promieniach, przeciwne skręty)
-float setup_p5_v_ms = 0.18;
-float setup_p5_r1_m = 0.60;  // pierwsza pętla
-float setup_p5_r2_m = 1.00;  // druga pętla (inna średnica)
+float setup_p5_v_ms = 0.4;
+float setup_p5_r1_m = 0.20;  // pierwsza pętla
+float setup_p5_r2_m = 0.40;  // druga pętla (inna średnica)
 
 // ====================== KONFIGURACJA PINÓW (wg schematu str. 36) ======================
-const int pinSilnikL = 5;   // PWM Lewy
-const int pinSilnikP = 6;   // PWM Prawy
+const int pinSilnikL = 9;   // PWM Lewy
+const int pinSilnikP = 10;   // PWM Prawy
 const int pinEnkoderL = 2;  // INT0 Lewy
 const int pinEnkoderP = 3;  // INT1 Prawy
 const int ogrnaicz_PWM = 255;
@@ -69,7 +69,7 @@ const float wspolczynnik = 4114.28571429;
 
 // ====================== PARAMETRY ROBOTA (DO ZMIERZENIA!) ======================
 const float rozstawKol_D = 0.09;      // [m]
-const float srednicaKola = 0.040;     // [m]
+const float srednicaKola = 0.044;     // [m]
 
 // ====================== PRĘDKOŚCI: teraz w m/s ======================
 // (RPM zostawiam tylko jako diagnostykę – faktycznie regulujemy w m/s)
@@ -86,17 +86,17 @@ float cmdV_ms = 0.0;
 float cmdR_m  = 1000.0; // prosto
 
 // ====================== REGULATOR PID (LEWY) ======================
-float Kp_L = 0.3;
-float Ki_L = 2;
-float Kd_L = 0.05;
+float Kp_L = 50;
+float Ki_L = 300;
+float Kd_L = 1;
 float integral_L = 0.0;
 float lastError_L = 0.0;
 int pwmWyjscie_L = 0;
 
 // ====================== REGULATOR PID (PRAWY) ======================
-float Kp_P = 0.3;
-float Ki_P = 3;
-float Kd_P = 0.01;
+float Kp_P = 50;
+float Ki_P = 300;
+float Kd_P = 1;
 float integral_P = 0.0;
 float lastError_P = 0.0;
 int pwmWyjscie_P = 0;
@@ -117,7 +117,7 @@ struct RSReg {
   bool useI;
 };
 
-RSReg rs = {0.6, 0.8, 0.0, 0.25, true};
+RSReg rs = {5, 5, 0.0, 0.25, true};
 
 // ====================== PROTOTYPY (żeby kompilator się nie czepiał kolejności) ======================
 void aktualizujPID();
@@ -309,7 +309,10 @@ void lab5_updateAutonomous() {
   } else if (p4State == P4_HALF2) {
     cmdV_ms = setup_p4_v_slow_ms;
     cmdR_m  = setup_p4_radius_m;
-    if (s >= fullLen) p4State = P4_DONE;
+    if (s >= fullLen) {
+    p4StartDist = sredniDystans_m();
+    p4State = P4_HALF1;
+    }
   } else { // DONE
     cmdV_ms = 0.0;
   }
@@ -320,7 +323,7 @@ void lab5_updateAutonomous() {
   float s = sredniDystans_m() - p5StartDist;
 
   if (p5State == P5_LOOP1) {
-    float len = 2.0 * PI * abs(setup_p5_r1_m);
+    float len = 2 * PI * abs(setup_p5_r1_m);
     cmdV_ms = setup_p5_v_ms;
     cmdR_m  = +abs(setup_p5_r1_m);  // skręt np. w prawo
     if (s >= len) {
@@ -328,7 +331,7 @@ void lab5_updateAutonomous() {
       p5StartDist = sredniDystans_m();
     }
   } else { // LOOP2
-    float len = 2.0 * PI * abs(setup_p5_r2_m);
+    float len = 2 * PI * abs(setup_p5_r2_m);
     cmdV_ms = setup_p5_v_ms;
     cmdR_m  = -abs(setup_p5_r2_m);  // skręt w lewo (przeciwnie)
     if (s >= len) {
@@ -529,6 +532,7 @@ void loop() {
   unsigned long teraz = millis();
   if (teraz - czasOstatniegoWyslania >= okresWysylania) {
     float vAktRobot_ms = 0.5f * (vAkt_L_ms + vAkt_P_ms);
+    Serial.print("0");      Serial.print(",");
     Serial.print("vZadRobot:");     Serial.print(cmdV_ms);      Serial.print(",");
     Serial.print("vAktRobot:");Serial.print(vAktRobot_ms); Serial.print(",");
     Serial.print("vZadL:"); Serial.print(vZad_L_ms); Serial.print(",");
